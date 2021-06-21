@@ -19,13 +19,13 @@ import os
 punctuation = '''!()-[]{};:'"\, <>./?@#$%^&*_~'''
 translationtable = str.maketrans("", "", punctuation)
 dropcontactsduringcampaign = True  # for evaluating new campaign probabilities
-# datafile = 'bank.csv'
-datafile = 'bank-full.csv'
+datafile = 'bank.csv'
+# datafile = 'bank-full.csv'
 # fillnamethod = 'average'
 fillnamethod = 'outlier'
 # modelmethod = 'rf'  # random forest
-modelmethod = 'nusvc'  # Nu Support Vector Classifier
-# modelmethod = 'logreg'
+# modelmethod = 'nusvc'  # Nu Support Vector Classifier
+modelmethod = 'logreg'
 plotfolder = modelmethod + 'plots'
 # scoring = 'recall'  # good when you want to minimize FN
 # scoring = 'precision'  # good when you want to minimize FP
@@ -50,7 +50,7 @@ if not os.path.exists(plotfolder):
     os.makedirs(plotfolder)
 
 # Make a new folder for validation results
-if testresults == 'yes':
+if testresults == True:
     if not os.path.exists(validationfolder):
         os.makedirs(validationfolder)
 
@@ -434,8 +434,24 @@ if modelmethod == 'nusvc':
     nusvcparams.to_csv(f'{modelmethod}params.csv')
 
 if modelmethod == 'logreg':
-    logregcoefs = pd.DataFrame(model.best_estimator_.steps[1][1].coef_)
+    logregcoefsarray = model.best_estimator_.steps[1][1].coef_
+    # logregcoefsarrayimpact = [impact for impact in logregcoefsarray[0] if abs(impact) > 0.02]
+    # logregcoefsimpactvariables = [bankdatatrain.columns[variablenumber] for variablenumber in
+    #                               range(len(logregcoefsarray[0])) if abs(variablenumber) > 0.02]
+    logregcoefs = pd.DataFrame(logregcoefsarray, columns=bankdatatrain.columns)
     logregcoefs.to_csv(f'{modelmethod}coefs.csv')
+    plt.bar(bankdatatrain.columns, logregcoefsarray[0])
+    plt.xticks(rotation=90)
+    plt.ylabel('logreg variable coefficient')
+    plt.tight_layout()
+    plt.savefig(f'{modelmethod}featureimportance.png')
+    plt.close()
+    # plt.bar(bankdatatrain.columns, logregcoefsarrayimpact)
+    # plt.xticks(rotation=90)
+    # plt.ylabel('logreg variable coefficient')
+    # plt.tight_layout()
+    # plt.savefig(f'{modelmethod}featureimportance.png')
+    # plt.close()
 
 # performance on test data DO NOT LOOK AT UNTIL YOU FEEL PRETTY GOOD ABOUT THE MODEL PERFORMANCE
 if testresults:
