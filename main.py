@@ -5,32 +5,31 @@ from sklearn.model_selection import train_test_split, GridSearchCV
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.svm import NuSVC
 from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import plot_confusion_matrix
+from sklearn.inspection import permutation_importance
+from sklearn.metrics import plot_confusion_matrix, f1_score
+from sklearn.utils.class_weight import compute_class_weight
 from sklearn.pipeline import Pipeline
 import matplotlib.pyplot as plt
 import seaborn as sns
 import os
 
 ############################################# Preprocessing
-# Thursday 9-11, 12:20-2:45, 3:25-4:00 Preprocessing
-# Thursday 4-5:15 Modeling
-# Friday 9:30-3:40 Modeling
 
 # definitions
 punctuation = '''!()-[]{};:'"\, <>./?@#$%^&*_~'''
 translationtable = str.maketrans("", "", punctuation)
 dropcontactsduringcampaign = True  # for evaluating new campaign probabilities
-datafile = 'bank.csv'
-# datafile = 'bank-full.csv'
+# datafile = 'bank.csv'
+datafile = 'bank-full.csv'
 # fillnamethod = 'average'
 fillnamethod = 'outlier'
 # modelmethod = 'rf'  # random forest
-# modelmethod = 'nusvc'  # Nu Support Vector Classifier
-modelmethod = 'logreg'
+modelmethod = 'nusvc'  # Nu Support Vector Classifier
+# modelmethod = 'logreg'
 plotfolder = modelmethod + 'plots'
 # scoring = 'recall'  # good when you want to minimize FN
 # scoring = 'precision'  # good when you want to minimize FP
-scoring = 'f1'  # mix of recall and precision
+scoring = 'f1_weighted'  # mix of recall and precision
 rfmaxfeatures = ['sqrt', 'log2']
 rfnestimators = [2, 5, 10, 15, 20, 50]
 rfmaxdepth = [5, 10, 15, 20, 25]
@@ -43,15 +42,15 @@ logregsolver = ['lbfgs', 'saga']
 # these parameters were determined through MDI feature analysis of random forests
 bestfeaturesfromrf = ['successpreviousoutcome', 'age', 'balance', 'dayofmonth', 'durationoflastcall',
                       'contactsbeforecampaign', 'dayssincecontactfrompreviouscampaign']
-validationresults = 'yes'  # DO NOT ENABLE UNLESS YOU ARE REALLY SURE YOUR MODEL IS GRRRRRRRRREAT
-validationfolder = 'validationABANDONHOPEOFFURTHERTESTINGALLYEWHOENTER'
+testresults = True  # DO NOT ENABLE UNLESS YOU ARE REALLY SURE YOUR MODEL IS GRRRRRRRRREAT
+validationfolder = 'validationDONOTPEEK'
 
 # Make a new folder to store plots in
 if not os.path.exists(plotfolder):
     os.makedirs(plotfolder)
 
 # Make a new folder for validation results
-if validationresults == 'yes':
+if testresults == 'yes':
     if not os.path.exists(validationfolder):
         os.makedirs(validationfolder)
 
@@ -82,10 +81,12 @@ listofvariablesnotonehotencoded = [x for x in rawbankdata.columns.tolist()
                                    if x not in listofvariablestoonehotencode]
 listofvariablestomakebinary = ['default', 'housing', 'loan', 'subscribetermdeposit']
 if dropcontactsduringcampaign:
-    listofvariablestostandardize = ['age', 'balance', 'dayofmonth', 'durationoflastcall', 'contactsbeforecampaign',
+    listofvariablestostandardize = ['age', 'balance', 'dayofmonth', 'durationoflastcall',
+                                    'contactsbeforecampaign',
                                     'dayssincecontactfrompreviouscampaign']
 if not dropcontactsduringcampaign:
-    listofvariablestostandardize = ['age', 'balance', 'dayofmonth', 'durationoflastcall', 'contactsbeforecampaign',
+    listofvariablestostandardize = ['age', 'balance', 'dayofmonth', 'durationoflastcall',
+                                    'contactsbeforecampaign',
                                     'contactsduring campaign', 'dayssincecontactfrompreviouscampaign']
 
 # create encoder and transform listofvariablestoonehotencode
@@ -116,9 +117,9 @@ for nonbinaryvariable in listofvariablestomakebinary:
 processedbankdata['dayssincecontactfrompreviouscampaign'] = processedbankdata[
     'dayssincecontactfrompreviouscampaign'].replace(-1, np.nan)
 
-##### make plots of processed data
+######################## makes plots of processed data
 # plot counts of target
-plt.rcdefaults
+# plt.rcdefaults
 fig, ax = plt.subplots()
 model_list = sorted(rawbankdata['subscribetermdeposit'].unique().tolist())
 model_dict = {}
@@ -146,12 +147,12 @@ fig1, ax1 = plt.subplots()
 ax1.pie(x, labels=y, autopct='%1.1f%%', startangle=90)
 ax1.axis('equal')  # Equal aspect ratio ensures that pie is drawn as a circle
 plt.title('Percentage of clients that subscribe a term deposit', size=16)
-plt.savefig(f'{modelmethod}TargetPercentage.png')  # pie chart, slices ordered and plotted counter-clockwise
+plt.savefig(f'{modelmethod}TargetPercentage.png')  # pie chart, slices ordered and plotted CCW
 plt.close()
 
 # make pie charts for multilabeled variables
 for classifiervariable in listofvariablestoonehotencode:
-    plt.rcdefaults
+    # plt.rcdefaults
     fig, ax = plt.subplots(figsize=(16, 16))
     model_list = sorted(rawbankdata[classifiervariable].unique().tolist())
     model_dict = {}
@@ -191,11 +192,10 @@ f, ax = plt.subplots(figsize=(20, 20))
 # plt.rcParams['font.size'] = 40
 heatmap = sns.heatmap(
     corr_top_top, square=True, ax=ax, annot=False, cmap='coolwarm', fmt='.2f', annot_kws={'size': 30})
-# plt.setp(heatmap.get_legend().get_texts(), fontsize='20')
-# heatmap.legend(fontsize=20)
 plt.title('Top correlated features of dataset', size=40)
 plt.savefig(f'{modelmethod}TargetHeatmap.png')
 plt.close()
+
 
 def removeextremeoutliers(dataseries):
     """Remove extreme outliers from the dataset"""
@@ -260,6 +260,9 @@ bankdatatrainandvalidate, bankdatatest, bankdatatrainandvalidateoutput, bankdata
     stratify=processedbankdata.iloc[:, -1:],
     random_state=42)
 
+gridsearchcvparameters = {}
+pipe = []
+
 if modelmethod == 'rf':
     gridsearchcvparameters = {
         'model__max_features': rfmaxfeatures,
@@ -269,7 +272,7 @@ if modelmethod == 'rf':
 
     pipe = Pipeline([
         ('scaler', Standardizer(fillnamethod=fillnamethod)),
-        ('model', RandomForestClassifier())
+        ('model', RandomForestClassifier(class_weight='balanced'))
     ])
 
 if modelmethod == 'nusvc':
@@ -281,7 +284,7 @@ if modelmethod == 'nusvc':
 
     pipe = Pipeline([
         ('scaler', Standardizer(fillnamethod=fillnamethod)),
-        ('model', NuSVC())
+        ('model', NuSVC(class_weight='balanced'))
     ])
 
 if modelmethod == 'logreg':
@@ -293,7 +296,7 @@ if modelmethod == 'logreg':
 
     pipe = Pipeline([
         ('scaler', Standardizer(fillnamethod=fillnamethod)),
-        ('model', LogisticRegression(max_iter=10000))
+        ('model', LogisticRegression(max_iter=1000, class_weight='balanced'))
     ])
 
 logscaleparameters = ['model__C', 'model__gamma']
@@ -338,39 +341,22 @@ for hyperparameter in gridsearchcvparameters.keys():
                                    hyperparameteritem not in [hyperparameter, otherhyperparameter]][0]
             resultscolumnfinalname = 'param_' + finalhyperparameter
 
-            # barplotlabels = []
-            # train_mean_list = []
-            # train_std_list = []
-            # validate_mean_list = []
-            # validate_std_list = []
-
             for hyperparametervalue in gridsearchcvparameters[hyperparameter]:
                 resultsbyhyperparameter = resultsbyotherhyperparameter.loc[
                     resultsbyotherhyperparameter[resultscolumnaname] == hyperparametervalue]
-                resultsbyhyperparameter.to_csv('checkme.csv')
 
                 barplotlabels = []
                 train_mean_list = []
                 train_std_list = []
                 validate_mean_list = []
                 validate_std_list = []
-                # print(hyperparameter, otherhyperparameter, finalhyperparameter)
-                # input('pause')
+
                 barplotlabels = barplotlabels + resultsbyhyperparameter[resultscolumnfinalname].tolist()
-                validate_mean_list = validate_mean_list + resultsbyhyperparameter['mean_test_score'].tolist()
+                validate_mean_list = validate_mean_list + resultsbyhyperparameter[
+                    'mean_test_score'].tolist()
                 validate_std_list = validate_std_list + resultsbyhyperparameter['std_test_score'].tolist()
                 train_mean_list = train_mean_list + resultsbyhyperparameter['mean_train_score'].tolist()
                 train_std_list = train_std_list + resultsbyhyperparameter['std_train_score'].tolist()
-                # plt.errorbar(resultsbyhyperparameter[resultscolumnfinalname],
-                #              resultsbyhyperparameter['mean_test_score'],
-                #              yerr=resultsbyhyperparameter['std_test_score'],
-                #              label=('test' + hyperparameter[7:] + str(hyperparametervalue) +
-                #                     otherhyperparameter[7:] + str(otherhyperparametervariationlength)))
-                # plt.errorbar(resultsbyhyperparameter[resultscolumnfinalname],
-                #              resultsbyhyperparameter['mean_train_score'],
-                #              yerr=resultsbyhyperparameter['std_train_score'],
-                #              label=('train' + hyperparameter[7:] + str(hyperparametervalue) +
-                #                     otherhyperparameter[7:] + str(otherhyperparametervariationlength)))
                 # setup plots
                 barplotposition = np.arange(len(barplotlabels))
                 width = 0.35  # width of bars
@@ -399,6 +385,13 @@ for hyperparameter in gridsearchcvparameters.keys():
                 # print(hyperparameter, otherhyperparameter, finalhyperparameter)
                 # input('check plot')
 
+# create subset of data to model using confusion matrices and permutation importance
+bankdatatrain, bankdatavalidate, bankdatatrainoutput, bankdatavalidateoutput = train_test_split(
+    bankdatatrainandvalidate,
+    bankdatatrainandvalidateoutput, test_size=0.15,
+    stratify=bankdatatrainandvalidateoutput,
+)
+
 if modelmethod == 'rf':
     bestrfmodel = model.best_estimator_.steps[1][1]
     importances = bestrfmodel.feature_importances_
@@ -410,29 +403,75 @@ if modelmethod == 'rf':
     ax.set_title("Feature importances using MDI")
     ax.set_ylabel("Mean decrease in impurity")
     fig.tight_layout()
-    plt.savefig(f'{modelmethod}MDIfeatureanalysis')
+    plt.savefig(f'{modelmethod}MDIfeatureanalysis.png')
 
-# create subset of data to model using confusion matrices
-bankdatatrain, bankdatavalidate, bankdatatrainoutput, bankdatavalidateoutput = train_test_split(
-    bankdatatrainandvalidate,
-    bankdatatrainandvalidateoutput, test_size=0.15,
-    stratify=bankdatatrainandvalidateoutput,
-)
+    rfpermutationimportance = permutation_importance(
+        model, bankdatatrain, bankdatatrainoutput, n_repeats=10,
+        random_state=42, n_jobs=2)
 
-confusionmatrixmodel = model.best_estimator_.fit(bankdatatrain, bankdatatrainoutput)
-disp = plot_confusion_matrix(confusionmatrixmodel, bankdatavalidate, bankdatavalidateoutput,
-                             cmap=plt.cm.Blues, normalize='true', display_labels=['no', 'yes'])
-disp.ax_.set_title('Confusion matrix')
-print(disp.confusion_matrix)
-plt.savefig(f'{modelmethod}exampleconfusionmatrix.png')
+    sortedrfpermutation = rfpermutationimportance.importances_mean.argsort()
+
+    fig, ax = plt.subplots()
+    ax.boxplot(rfpermutationimportance.importances[sortedrfpermutation].T,
+               vert=False, labels=bankdatatrain.columns[sortedrfpermutation])
+    ax.set_title("Permutation importance (train set)")
+    plt.tight_layout()
+    plt.savefig(f'{modelmethod}Permutationimportances.png')
+    plt.close()
+
+if modelmethod == 'nusvc':
+    nusvcweights = pd.Series(model.best_estimator_.steps[1][1].class_weight_)
+    nusvcclasses = pd.Series(model.best_estimator_.steps[1][1].classes_)
+    nusvcdualcoefs = model.best_estimator_.steps[1][1].dual_coef_
+    nusvcsupportindexes = pd.Series(model.best_estimator_.steps[1][1].support_)
+    nusvcsupportvectors = pd.DataFrame(model.best_estimator_.steps[1][1].support_vectors_)
+    nusvcnsupportvectors = pd.DataFrame(model.best_estimator_.steps[1][1].n_support_)
+    nusvcparams = pd.Series(model.best_estimator_.steps[1][1].get_params())
+    nusvcweights.to_csv(f'{modelmethod}weights.csv')
+    nusvcsupportindexes.to_csv(f'{modelmethod}indexes.csv')
+    nusvcsupportvectors.to_csv(f'{modelmethod}supportvectors.csv')
+    nusvcnsupportvectors.to_csv(f'{modelmethod}supportnvectors.csv')
+    nusvcparams.to_csv(f'{modelmethod}params.csv')
+
+if modelmethod == 'logreg':
+    logregcoefs = pd.DataFrame(model.best_estimator_.steps[1][1].coef_)
+    logregcoefs.to_csv(f'{modelmethod}coefs.csv')
 
 # performance on test data DO NOT LOOK AT UNTIL YOU FEEL PRETTY GOOD ABOUT THE MODEL PERFORMANCE
-if validationresults == 'yes':
+if testresults:
+    # compute the class weight for the test data set
+    testclasstrue = np.ones(bankdatatestoutput.sum())
+    testclassfalse = np.zeros(len(bankdatatestoutput) - bankdatatestoutput.sum())
+    testclass = np.concatenate([testclassfalse, testclasstrue])
+    testclassweight = compute_class_weight('balanced', [0, 1], testclass)
+    testclassweight = testclassweight / sum(testclassweight)
+    testclasssampleweight = np.where(bankdatatestoutput == 1, testclassweight[1], testclassweight[0])
     disp = plot_confusion_matrix(model.best_estimator_, bankdatatest, bankdatatestoutput,
                                  cmap=plt.cm.Blues, normalize='true', display_labels=['no', 'yes'])
     disp.ax_.set_title('Confusion matrix')
     plt.savefig(f'{validationfolder}/{modelmethod}confusionmatrix.png')
-
-    modelpredictions = pd.DataFrame(model.best_estimator_.predict(bankdatatest),
+    # make predictions on test data set
+    testpredictions = model.best_estimator_.predict(bankdatatest)
+    modelpredictions = pd.DataFrame(testpredictions,
                                     index=bankdatatest.index).join(bankdatatestoutput)
-    modelpredictions.to_csv(f'{validationfolder}/{modelmethod}validationpredictions.csv')
+    # calculate f1 score of model based on weight of respective outputs
+    modelscore = pd.Series(f1_score(testpredictions, bankdatatestoutput,
+                                    sample_weight=testclasssampleweight.tolist()),
+                           index=modelpredictions.index)
+    modelpredictions['f1score'] = modelscore
+    modelpredictions = modelpredictions.rename(columns={
+        '0' : 'modelpredictions',
+        'subscribetermdeposit' : 'trueresults'
+    })
+    modelpredictions.to_csv(f'{validationfolder}/{modelmethod}testpredictions.csv')
+
+# generate example confusion matrix based on model best estimator on bankdatatrain only
+if not testresults:
+    confusionmatrixmodel = model.best_estimator_.fit(
+        bankdatatrain, bankdatatrainoutput.values.ravel())
+    disp = plot_confusion_matrix(confusionmatrixmodel, bankdatavalidate,
+                                 bankdatavalidateoutput.values.ravel(),
+                                 cmap=plt.cm.Blues, normalize='true', display_labels=['no', 'yes'])
+    disp.ax_.set_title('Confusion matrix')
+    print(disp.confusion_matrix)
+    plt.savefig(f'{modelmethod}exampleconfusionmatrix.png')
